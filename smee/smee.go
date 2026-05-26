@@ -21,6 +21,7 @@ import (
 	"github.com/insomniacslk/dhcp/iana"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
+	v1alpha2 "github.com/tinkerbell/tinkerbell/api/v1alpha2/tinkerbell"
 	"github.com/tinkerbell/tinkerbell/pkg/constant"
 	"github.com/tinkerbell/tinkerbell/pkg/data"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/handler/proxy"
@@ -43,6 +44,11 @@ func MetricsRegistry() *prometheus.Registry {
 // BackendReader is the interface for getting data from a backend.
 type BackendReader interface {
 	FilterHardware(ctx context.Context, opts data.HardwareFilter) (*tinkerbell.Hardware, error)
+}
+
+// BackendReaderV2 looks up v1alpha2 Hardware objects.
+type BackendReaderV2 interface {
+	FilterHardwareV2(ctx context.Context, opts data.HardwareFilter) (*v1alpha2.Hardware, error)
 }
 
 const (
@@ -91,6 +97,8 @@ func (d *DHCPMode) Type() string {
 type Config struct {
 	// Backend is the backend to use for getting data.
 	Backend BackendReader
+	// BackendV2 is the v1alpha2 backend used for DHCPv6.
+	BackendV2 BackendReaderV2
 	// DHCP is the configuration for the DHCP service.
 	DHCP DHCP
 	// DHCPv6 is the configuration for the DHCPv6 service.
@@ -491,7 +499,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		}
 
 		dh6 := &reservation.Handler6{
-			Backend:      c.Backend,
+			Backend:      c.BackendV2,
 			ServerAddr:   serverAddr,
 			Log:          log.WithValues("service", "dhcpv6"),
 			ServerDUID:   reservation.NewServerDUID(serverMAC),
