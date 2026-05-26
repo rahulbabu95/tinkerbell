@@ -93,6 +93,8 @@ type Config struct {
 	Backend BackendReader
 	// DHCP is the configuration for the DHCP service.
 	DHCP DHCP
+	// DHCPv6 is the configuration for the DHCPv6 service.
+	DHCPv6 DHCPv6Config
 	// IPXE is the configuration for the iPXE service.
 	IPXE IPXE
 	// ISO is the configuration for the ISO service.
@@ -182,6 +184,22 @@ type DHCP struct {
 	IPXEHTTPBinaryURL *url.URL
 	// IPXEHTTPScript is the URL to the iPXE script to use.
 	IPXEHTTPScript IPXEHTTPScript
+}
+
+// DHCPv6Config is the configuration for the DHCPv6 service.
+type DHCPv6Config struct {
+	// Enabled configures whether the DHCPv6 server is enabled.
+	Enabled bool
+	// BindAddr is the local IPv6 address to which to bind the DHCPv6 server.
+	BindAddr netip.Addr
+	// BindPort is the local port to which to bind the DHCPv6 server (default: 547).
+	BindPort uint16
+	// BindInterface is the local interface to which to bind the DHCPv6 server.
+	BindInterface string
+	// ServerAddr is the IPv6 address to use in boot file URLs.
+	ServerAddr netip.Addr
+	// BootFilePort is the HTTP port for iPXE binary/script serving.
+	BootFilePort uint16
 }
 
 type IPXEHTTPBinary struct {
@@ -446,6 +464,55 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		})
 	}
 
+	// dhcpv6 serving
+	if c.DHCPv6.Enabled {
+		bindPort := c.DHCPv6.BindPort
+		if bindPort == 0 {
+			bindPort = 547
+		}
+		bindAddr := c.DHCPv6.BindAddr
+		if !bindAddr.IsValid() {
+			bindAddr = netip.MustParseAddr("::")
+		}
+		dhcpv6AddrPort := netip.AddrPortFrom(bindAddr, bindPort)
+		log.Info("starting dhcpv6 server", "bindAddr", dhcpv6AddrPort)
+
+		// Determine a MAC for the server DUID. Use the bind interface if available.
+		serverMAC := net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}
+		if c.DHCPv6.BindInterface != "" {
+			if iface, err := net.InterfaceByName(c.DHCPv6.BindInterface); err == nil {
+				serverMAC = iface.HardwareAddr
+			}
+		}
+
+		serverAddr := c.DHCPv6.ServerAddr
+		if !serverAddr.IsValid() {
+			serverAddr = bindAddr
+		}
+
+		dh6 := &reservation.Handler6{
+			Backend:      c.Backend,
+			ServerAddr:   serverAddr,
+			Log:          log.WithValues("service", "dhcpv6"),
+			ServerDUID:   reservation.NewServerDUID(serverMAC),
+			BootFilePort: c.DHCPv6.BootFilePort,
+		}
+
+		g.Go(func() error {
+			conn, err := net.ListenPacket("udp6", net.UDPAddrFromAddrPort(dhcpv6AddrPort).String())
+			if err != nil {
+				return fmt.Errorf("failed to listen on DHCPv6 port: %w", err)
+			}
+			defer conn.Close()
+			ds := &server.DHCPv6Server{
+				Logger:   log.WithValues("service", "dhcpv6"),
+				Conn:     conn,
+				Handlers: []server.Handler6{dh6},
+			}
+			return ds.Serve(ctx)
+		})
+	}
+
 	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("failed running all Smee services: %w", err)
 	}
@@ -613,5 +680,5 @@ func (c *Config) Transformer(typ reflect.Type) func(dst, src reflect.Value) erro
 }
 
 func (c *Config) noServicesEnabled() bool {
-	return !c.DHCP.Enabled && !c.TFTP.Enabled && !c.Syslog.Enabled && !c.ISO.Enabled && !c.IPXE.HTTPBinaryServer.Enabled && !c.IPXE.HTTPScriptServer.Enabled
+	return !c.DHCP.Enabled && !c.DHCPv6.Enabled && !c.TFTP.Enabled && !c.Syslog.Enabled && !c.ISO.Enabled && !c.IPXE.HTTPBinaryServer.Enabled && !c.IPXE.HTTPScriptServer.Enabled
 }
