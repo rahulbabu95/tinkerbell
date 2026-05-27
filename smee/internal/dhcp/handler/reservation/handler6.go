@@ -64,6 +64,9 @@ func (h *Handler6) Handle6(conn net.PacketConn, peer net.Addr, msg dhcpv6.DHCPv6
 	case dhcpv6.MessageTypeRequest:
 		log.Info("received DHCPv6 Request")
 		h.handleRequest(conn, peer, m, mac, log)
+	case dhcpv6.MessageTypeInformationRequest:
+		log.Info("received DHCPv6 Information-Request")
+		h.handleInformationRequest(conn, peer, m, mac, log)
 	default:
 		log.V(1).Info("ignoring DHCPv6 message type")
 	}
@@ -85,6 +88,57 @@ func (h *Handler6) handleRequest(conn net.PacketConn, peer net.Addr, msg *dhcpv6
 		return
 	}
 	h.send(conn, peer, resp, log)
+}
+
+func (h *Handler6) handleInformationRequest(conn net.PacketConn, peer net.Addr, msg *dhcpv6.Message, mac net.HardwareAddr, log logr.Logger) {
+	resp, err := h.buildInfoReply(msg, mac, log)
+	if err != nil {
+		log.Error(err, "failed to build Information-Request Reply")
+		return
+	}
+	h.send(conn, peer, resp, log)
+}
+
+func (h *Handler6) buildInfoReply(req *dhcpv6.Message, mac net.HardwareAddr, log logr.Logger) (*dhcpv6.Message, error) {
+	resp, err := dhcpv6.NewMessage()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DHCPv6 message: %w", err)
+	}
+	resp.MessageType = dhcpv6.MessageTypeReply
+	resp.TransactionID = req.TransactionID
+
+	resp.AddOption(dhcpv6.OptServerID(h.ServerDUID))
+
+	if cid := req.GetOneOption(dhcpv6.OptionClientID); cid != nil {
+		resp.UpdateOption(cid)
+	}
+
+	// Boot File URL (option 59) — the main thing an Information-Request wants
+	port := h.BootFilePort
+	if port == 0 {
+		port = 8080
+	}
+	if h.ServerAddr.IsValid() && !h.ServerAddr.IsUnspecified() {
+		bootFileURL := fmt.Sprintf("http://[%s]:%d/ipxe/binary/ipxe.efi", h.ServerAddr.String(), port)
+		if uc := req.Options.UserClasses(); len(uc) > 0 {
+			for _, class := range uc {
+				if string(class) == string(dhcp.Tinkerbell) {
+					bootFileURL = fmt.Sprintf("http://[%s]:%d/ipxe/script/%s/auto.ipxe", h.ServerAddr.String(), port, mac.String())
+					break
+				}
+			}
+		}
+		resp.AddOption(dhcpv6.OptBootFileURL(bootFileURL))
+	}
+
+	// DNS servers (option 23)
+	if h.ServerAddr.IsValid() {
+		ip := h.ServerAddr.As16()
+		resp.AddOption(dhcpv6.OptDNS(net.IP(ip[:])))
+	}
+
+	log.Info("built DHCPv6 Information-Request Reply", "bootFileURL", fmt.Sprintf("http://[%s]:%d/ipxe/binary/ipxe.efi", h.ServerAddr.String(), port))
+	return resp, nil
 }
 
 func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgType dhcpv6.MessageType, log logr.Logger) (*dhcpv6.Message, error) {
