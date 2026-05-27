@@ -62,6 +62,14 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(DHCPIPXEHTTPScriptPort, ffval.NewValueDefault(&sc.DHCPIPXEScript.Port, sc.DHCPIPXEScript.Port))
 	fs.Register(DHCPIPXEHTTPScriptPath, ffval.NewValueDefault(&sc.Config.DHCP.IPXEHTTPScript.URL.Path, sc.Config.DHCP.IPXEHTTPScript.URL.Path))
 
+	// DHCPv6 flags
+	fs.Register(DHCPv6Enabled, ffval.NewValueDefault(&sc.Config.DHCPv6.Enabled, sc.Config.DHCPv6.Enabled))
+	fs.Register(DHCPv6BindAddr, &ntip.Addr{Addr: &sc.Config.DHCPv6.BindAddr})
+	fs.Register(DHCPv6BindPort, ffval.NewValueDefault(&sc.Config.DHCPv6.BindPort, sc.Config.DHCPv6.BindPort))
+	fs.Register(DHCPv6BindInterface, ffval.NewValueDefault(&sc.Config.DHCPv6.BindInterface, sc.Config.DHCPv6.BindInterface))
+	fs.Register(DHCPv6ServerAddr, &ntip.Addr{Addr: &sc.Config.DHCPv6.ServerAddr})
+	fs.Register(DHCPv6BootFilePort, ffval.NewValueDefault(&sc.Config.DHCPv6.BootFilePort, sc.Config.DHCPv6.BootFilePort))
+
 	// IPXE flags
 	fs.Register(IPXEArchMapping, &ffval.Value[map[iana.Arch]constant.IPXEBinary]{
 		ParseFunc: func(s string) (map[iana.Arch]constant.IPXEBinary, error) {
@@ -474,4 +482,35 @@ var SmeeLogLevel = Config{
 var DHCPEnableNetbootOptions = Config{
 	Name:  "dhcp-enable-netboot-options",
 	Usage: "[dhcp] enable sending netboot DHCP options",
+}
+
+// DHCPv6 flags.
+var DHCPv6Enabled = Config{
+	Name:  "dhcpv6-enabled",
+	Usage: "[dhcpv6] enable DHCPv6 server for IPv6 PXE boot",
+}
+
+var DHCPv6BindAddr = Config{
+	Name:  "dhcpv6-bind-addr",
+	Usage: "[dhcpv6] local IPv6 address to listen on (default ::)",
+}
+
+var DHCPv6BindPort = Config{
+	Name:  "dhcpv6-bind-port",
+	Usage: "[dhcpv6] local port to listen on (default 547)",
+}
+
+var DHCPv6BindInterface = Config{
+	Name:  "dhcpv6-bind-interface",
+	Usage: "[dhcpv6] network interface to bind to (used for server DUID generation)",
+}
+
+var DHCPv6ServerAddr = Config{
+	Name:  "dhcpv6-server-addr",
+	Usage: "[dhcpv6] IPv6 address to use in boot file URLs",
+}
+
+var DHCPv6BootFilePort = Config{
+	Name:  "dhcpv6-boot-file-port",
+	Usage: "[dhcpv6] HTTP port for iPXE binary/script serving in boot file URLs (default 8080)",
 }

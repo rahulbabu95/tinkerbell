@@ -307,6 +307,7 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 			return fmt.Errorf("failed to create kube backend: %w", err)
 		}
 		s.Config.Backend = b
+		s.Config.BackendV2 = b
 		h.Config.SetBackendFromFilterer(b)
 		ts.Config.SetBackends(b)
 		tc.Config.Client = b.ClientConfig
