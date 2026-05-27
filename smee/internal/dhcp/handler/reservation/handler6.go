@@ -93,14 +93,16 @@ func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgT
 	var hwData *dhcp.DHCPv6Data
 	if h.Backend != nil {
 		hw, err := h.Backend.FilterHardwareV2(ctx, data.HardwareFilter{ByMACAddress: mac.String()})
-		if err != nil {
-			return nil, fmt.Errorf("v2 backend lookup failed: %w", err)
+		if err == nil {
+			hwData, err = dhcp.ConvertV2ForDHCPv6(ctx, mac, hw)
+			if err != nil {
+				return nil, fmt.Errorf("convert v2 for DHCPv6 failed: %w", err)
+			}
+		} else {
+			log.V(1).Info("v2 backend lookup failed, trying v1 fallback", "error", err)
 		}
-		hwData, err = dhcp.ConvertV2ForDHCPv6(ctx, mac, hw)
-		if err != nil {
-			return nil, fmt.Errorf("convert v2 for DHCPv6 failed: %w", err)
-		}
-	} else if h.BackendV1 != nil {
+	}
+	if hwData == nil && h.BackendV1 != nil {
 		hw, err := h.BackendV1.FilterHardware(ctx, data.HardwareFilter{ByMACAddress: mac.String()})
 		if err != nil {
 			return nil, fmt.Errorf("v1 backend lookup failed: %w", err)
