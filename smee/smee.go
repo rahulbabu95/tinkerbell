@@ -500,6 +500,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 
 		dh6 := &reservation.Handler6{
 			Backend:      c.BackendV2,
+			BackendV1:    c.Backend,
 			ServerAddr:   serverAddr,
 			Log:          log.WithValues("service", "dhcpv6"),
 			ServerDUID:   reservation.NewServerDUID(serverMAC),

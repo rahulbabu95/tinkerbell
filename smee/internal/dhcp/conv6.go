@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	v1alpha1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
 	v1alpha2 "github.com/tinkerbell/tinkerbell/api/v1alpha2/tinkerbell"
 )
 
@@ -131,6 +132,72 @@ func ConvertV2ForDHCPv6(_ context.Context, mac net.HardwareAddr, hw *v1alpha2.Ha
 	// Extract Netboot configuration.
 	if ni.Netboot != nil {
 		d.AllowNetboot = !ni.Netboot.Disabled
+	}
+
+	return d, nil
+}
+
+// ConvertV1ForDHCPv6 converts a v1alpha1 Hardware and MAC into DHCPv6-relevant data.
+// This is a fallback for when v1alpha2 Hardware objects are not available.
+func ConvertV1ForDHCPv6(_ context.Context, mac net.HardwareAddr, hw *v1alpha1.Hardware) (*DHCPv6Data, error) {
+	if hw == nil {
+		return nil, errors.New("hardware is nil")
+	}
+
+	var iface v1alpha1.Interface
+	found := false
+	for _, i := range hw.Spec.Interfaces {
+		if i.DHCP != nil && i.DHCP.MAC == mac.String() {
+			iface = i
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("no interface found for MAC %s", mac.String())
+	}
+
+	d := &DHCPv6Data{
+		MACAddress:        mac,
+		PreferredLifetime: defaultPreferredLifetime,
+		ValidLifetime:     defaultValidLifetime,
+		PrefixLength:      defaultPrefixLength,
+		AllowNetboot:      true,
+	}
+
+	if iface.DHCP != nil {
+		if iface.DHCP.IP != nil && iface.DHCP.IP.Address != "" {
+			addr, err := netip.ParseAddr(iface.DHCP.IP.Address)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse IP address %q: %w", iface.DHCP.IP.Address, err)
+			}
+			if !addr.Is6() {
+				return nil, fmt.Errorf("address %q is not IPv6", iface.DHCP.IP.Address)
+			}
+			d.IPAddress = addr
+
+			if iface.DHCP.IP.Gateway != "" {
+				gw, err := netip.ParseAddr(iface.DHCP.IP.Gateway)
+				if err == nil {
+					d.Gateway = gw
+				}
+			}
+		}
+
+		for _, ns := range iface.DHCP.NameServers {
+			ip := net.ParseIP(ns)
+			if ip != nil && ip.To4() == nil {
+				d.Nameservers = append(d.Nameservers, ip)
+			}
+		}
+	}
+
+	if iface.DisableDHCP {
+		d.Disabled = true
+	}
+
+	if iface.Netboot != nil && iface.Netboot.AllowPXE != nil {
+		d.AllowNetboot = *iface.Netboot.AllowPXE
 	}
 
 	return d, nil

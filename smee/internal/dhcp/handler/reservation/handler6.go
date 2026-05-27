@@ -18,7 +18,11 @@ import (
 // Handler6 handles DHCPv6 messages for IPv6 host reservations.
 type Handler6 struct {
 	// Backend is the v1alpha2 backend to use for getting DHCP data.
+	// If nil, BackendV1 is used as a fallback.
 	Backend BackendReaderV2
+
+	// BackendV1 is the v1alpha1 fallback backend.
+	BackendV1 BackendReader
 
 	// ServerAddr is smee's IPv6 address used for boot file URL.
 	ServerAddr netip.Addr
@@ -85,14 +89,28 @@ func (h *Handler6) handleRequest(conn net.PacketConn, peer net.Addr, msg *dhcpv6
 
 func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgType dhcpv6.MessageType, log logr.Logger) (*dhcpv6.Message, error) {
 	ctx := context.Background()
-	hw, err := h.Backend.FilterHardwareV2(ctx, data.HardwareFilter{ByMACAddress: mac.String()})
-	if err != nil {
-		return nil, fmt.Errorf("backend lookup failed: %w", err)
-	}
 
-	hwData, err := dhcp.ConvertV2ForDHCPv6(ctx, mac, hw)
-	if err != nil {
-		return nil, fmt.Errorf("convert v2 for DHCPv6 failed: %w", err)
+	var hwData *dhcp.DHCPv6Data
+	if h.Backend != nil {
+		hw, err := h.Backend.FilterHardwareV2(ctx, data.HardwareFilter{ByMACAddress: mac.String()})
+		if err != nil {
+			return nil, fmt.Errorf("v2 backend lookup failed: %w", err)
+		}
+		hwData, err = dhcp.ConvertV2ForDHCPv6(ctx, mac, hw)
+		if err != nil {
+			return nil, fmt.Errorf("convert v2 for DHCPv6 failed: %w", err)
+		}
+	} else if h.BackendV1 != nil {
+		hw, err := h.BackendV1.FilterHardware(ctx, data.HardwareFilter{ByMACAddress: mac.String()})
+		if err != nil {
+			return nil, fmt.Errorf("v1 backend lookup failed: %w", err)
+		}
+		hwData, err = dhcp.ConvertV1ForDHCPv6(ctx, mac, hw)
+		if err != nil {
+			return nil, fmt.Errorf("convert v1 for DHCPv6 failed: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("no backend configured")
 	}
 
 	if hwData.Disabled {
