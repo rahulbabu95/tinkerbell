@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/insomniacslk/dhcp/dhcpv6"
+	"golang.org/x/net/ipv6"
 )
 
 // Handler6 is the interface for handling DHCPv6 messages.
@@ -26,6 +27,21 @@ func (s *DHCPv6Server) Serve(ctx context.Context) error {
 		<-ctx.Done()
 		_ = s.Conn.Close()
 	}()
+
+	// Join the All_DHCP_Relay_Agents_and_Servers multicast group (ff02::1:2)
+	// on all interfaces so we receive DHCPv6 Solicit messages.
+	p := ipv6.NewPacketConn(s.Conn)
+	allDHCPGroup := net.ParseIP("ff02::1:2")
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagMulticast != 0 {
+			if err := p.JoinGroup(&iface, &net.UDPAddr{IP: allDHCPGroup}); err != nil {
+				s.Logger.V(1).Info("failed to join DHCPv6 multicast group", "interface", iface.Name, "error", err)
+			} else {
+				s.Logger.Info("joined DHCPv6 multicast group ff02::1:2", "interface", iface.Name)
+			}
+		}
+	}
 
 	s.Logger.Info("DHCPv6 server listening", "addr", s.Conn.LocalAddr())
 
