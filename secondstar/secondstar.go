@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"time"
@@ -31,7 +32,7 @@ type Config struct {
 func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	addrPort := fmt.Sprintf(":%d", c.SSHPort)
 	if c.BindAddr.IsValid() && !c.BindAddr.IsUnspecified() {
-		addrPort = fmt.Sprintf("%s:%d", c.BindAddr.String(), c.SSHPort)
+		addrPort = net.JoinHostPort(c.BindAddr.String(), fmt.Sprintf("%d", c.SSHPort))
 	}
 	log.Info("starting ssh server", "addrPort", addrPort)
 	server := &gssh.Server{
