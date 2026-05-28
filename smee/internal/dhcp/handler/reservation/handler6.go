@@ -237,7 +237,7 @@ func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgT
 		if port == 0 {
 			port = 8080
 		}
-		bootFileURL = fmt.Sprintf("http://[%s]:%d/ipxe/binary/ipxe.efi", h.ServerAddr.String(), port)
+		bootFileURL = fmt.Sprintf("tftp://[%s]/ipxe.efi", h.ServerAddr.String())
 		// Check if client already has iPXE (UserClass = "Tinkerbell")
 		if uc := req.Options.UserClasses(); len(uc) > 0 {
 			for _, class := range uc {
