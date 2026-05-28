@@ -238,10 +238,10 @@ func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgT
 			port = 8080
 		}
 		bootFileURL = fmt.Sprintf("tftp://[%s]/ipxe.efi", h.ServerAddr.String())
-		// Check if client already has iPXE (UserClass = "Tinkerbell")
+		// Check if client already has iPXE (UserClass = "iPXE" or "Tinkerbell")
 		if uc := req.Options.UserClasses(); len(uc) > 0 {
 			for _, class := range uc {
-				if string(class) == string(dhcp.Tinkerbell) {
+				if string(class) == string(dhcp.Tinkerbell) || string(class) == string(dhcp.IPXE) {
 					// Client already has iPXE, serve the script instead
 					bootFileURL = fmt.Sprintf("http://[%s]:%d/ipxe/script/%s/auto.ipxe", h.ServerAddr.String(), port, mac.String())
 					break
