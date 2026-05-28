@@ -49,9 +49,9 @@ func (h *Handler6) Handle6(conn net.PacketConn, peer net.Addr, msg dhcpv6.DHCPv6
 		return
 	}
 
-	mac := h.extractMAC(m)
+	mac := h.extractMAC(m, peer)
 	if mac == nil {
-		h.Log.V(1).Info("could not extract MAC from DHCPv6 message, ignoring")
+		h.Log.Info("could not extract MAC from DHCPv6 message, ignoring", "peer", peer.String())
 		return
 	}
 
@@ -269,7 +269,7 @@ func (h *Handler6) send(conn net.PacketConn, peer net.Addr, msg *dhcpv6.Message,
 // 1. Option 79 (Client Link-Layer Address)
 // 2. Client ID DUID-LL
 // 3. Client ID DUID-LLT
-func (h *Handler6) extractMAC(msg *dhcpv6.Message) net.HardwareAddr {
+func (h *Handler6) extractMAC(msg *dhcpv6.Message, peer net.Addr) net.HardwareAddr {
 	// Try option 79 (Client Link-Layer Address Option, RFC 6939)
 	if opt := msg.GetOneOption(dhcpv6.OptionClientLinkLayerAddr); opt != nil {
 		optData := opt.ToBytes()
@@ -279,20 +279,36 @@ func (h *Handler6) extractMAC(msg *dhcpv6.Message) net.HardwareAddr {
 		}
 	}
 
-	// Try Client ID
+	// Try Client ID DUID-LL or DUID-LLT
 	cidDUID := msg.Options.ClientID()
-	if cidDUID == nil {
-		return nil
+	if cidDUID != nil {
+		switch duid := cidDUID.(type) {
+		case *dhcpv6.DUIDLL:
+			if duid.HWType == iana.HWTypeEthernet && len(duid.LinkLayerAddr) == 6 {
+				return duid.LinkLayerAddr
+			}
+		case *dhcpv6.DUIDLLT:
+			if duid.HWType == iana.HWTypeEthernet && len(duid.LinkLayerAddr) == 6 {
+				return duid.LinkLayerAddr
+			}
+		}
 	}
 
-	switch duid := cidDUID.(type) {
-	case *dhcpv6.DUIDLL:
-		if duid.HWType == iana.HWTypeEthernet && len(duid.LinkLayerAddr) == 6 {
-			return duid.LinkLayerAddr
-		}
-	case *dhcpv6.DUIDLLT:
-		if duid.HWType == iana.HWTypeEthernet && len(duid.LinkLayerAddr) == 6 {
-			return duid.LinkLayerAddr
+	// Fallback: derive MAC from peer's IPv6 link-local address (EUI-64)
+	// fe80::5054:ff:fea6:1 → MAC 52:54:00:a6:00:01
+	if udpAddr, ok := peer.(*net.UDPAddr); ok && udpAddr.IP.IsLinkLocalUnicast() {
+		ip := udpAddr.IP.To16()
+		if ip != nil && len(ip) == 16 {
+			// EUI-64: bytes 8-15 of the IPv6 address, with bit 6 of byte 8 flipped
+			mac := make(net.HardwareAddr, 6)
+			mac[0] = ip[8] ^ 0x02 // flip universal/local bit
+			mac[1] = ip[9]
+			mac[2] = ip[10]
+			// skip ip[11] and ip[12] which are 0xff, 0xfe in EUI-64
+			mac[3] = ip[13]
+			mac[4] = ip[14]
+			mac[5] = ip[15]
+			return mac
 		}
 	}
 
