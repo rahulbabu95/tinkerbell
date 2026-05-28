@@ -447,6 +447,23 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		g.Go(func() error {
 			return tftpHandler.ListenAndServe(ctx)
 		})
+
+		// Start a second TFTP listener on IPv6 when DHCPv6 is enabled.
+		if c.DHCPv6.Enabled && c.DHCPv6.ServerAddr.IsValid() && c.DHCPv6.ServerAddr.Is6() {
+			addrPortV6 := netip.AddrPortFrom(c.DHCPv6.ServerAddr, c.TFTP.BindPort)
+			tftpHandlerV6 := binary.TFTP{
+				Log:                  log,
+				EnableTFTPSinglePort: c.TFTP.SinglePort,
+				Addr:                 addrPortV6,
+				Timeout:              c.TFTP.Timeout,
+				Patch:                []byte(c.IPXE.EmbeddedScriptPatch),
+				BlockSize:            c.TFTP.BlockSize,
+			}
+			log.Info("starting tftp server (IPv6)", "bindAddr", addrPortV6.String())
+			g.Go(func() error {
+				return tftpHandlerV6.ListenAndServe(ctx)
+			})
+		}
 	}
 
 	// dhcp serving
