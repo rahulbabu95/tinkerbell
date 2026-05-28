@@ -150,7 +150,7 @@ func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgT
 		if err == nil {
 			hwData, err = dhcp.ConvertV2ForDHCPv6(ctx, mac, hw)
 			if err != nil {
-				return nil, fmt.Errorf("convert v2 for DHCPv6 failed: %w", err)
+				log.V(1).Info("v2 conversion failed, trying v1 fallback", "error", err)
 			}
 		} else {
 			log.V(1).Info("v2 backend lookup failed, trying v1 fallback", "error", err)
@@ -165,8 +165,9 @@ func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgT
 		if err != nil {
 			return nil, fmt.Errorf("convert v1 for DHCPv6 failed: %w", err)
 		}
-	} else {
-		return nil, fmt.Errorf("no backend configured")
+	}
+	if hwData == nil {
+		return nil, fmt.Errorf("no backend configured or hardware not found for MAC %s", mac)
 	}
 
 	if hwData.Disabled {
