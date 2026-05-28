@@ -1,0 +1,7 @@
+error in schema from upstream PR: 
+The CustomResourceDefinition "hardware.tinkerbell.org" is invalid: spec.validation.openAPIV3Schema.properties[spec].properties[references].properties[builtin].properties[bmc].x-kubernetes-validations[0].rule: Invalid value: apiextensions.ValidationRule{Rule:"(has(self.name) && self.name != \"\") == (has(self.namespace) && self.namespace != \"\")", Message:"name and namespace must both be specified or both be empty", MessageExpression:"", Reason:(*apiextensions.FieldValueErrorReason)(nil), FieldPath:"", OptionalOldSelf:(*bool)(nil)}: compilation failed: ERROR: <input>:1:44: undefined field 'namespace'
+ | (has(self.name) && self.name != "") == (has(self.namespace) && self.namespace != "")
+ | ...........................................^
+ERROR: <input>:1:68: undefined field 'namespace'
+ | (has(self.name) && self.name != "") == (has(self.namespace) && self.namespace != "")
+ | ...................................................................^

@@ -253,7 +253,7 @@ func (h *Handler6) buildResponse(req *dhcpv6.Message, mac net.HardwareAddr, msgT
 		resp.AddOption(dhcpv6.OptBootFileURL(bootFileURL))
 	}
 
-	log.Info("built DHCPv6 response", "type", msgType.String(), "ipv6Addr", hwData.IPAddress.String(), "prefix", hwData.PrefixLength)
+	log.Info("built DHCPv6 response", "type", msgType.String(), "ipv6Addr", hwData.IPAddress.String(), "prefix", hwData.PrefixLength, "bootFileURL", bootFileURL, "allowNetboot", hwData.AllowNetboot)
 	return resp, nil
 }
 

@@ -1,0 +1,179 @@
+# EKS-A Baremetal IPv6 Provisioning POC - Plan of Action
+
+## Goal
+Prove that Tinkerbell (smee) can PXE boot a real baremetal server over IPv6 in DEN080 lab, loading HookOS end-to-end.
+
+## Success Criteria (Phase 1)
+Server powers on via IPMI (IPv4 BMC) -> NIC does PXEv6 -> smee responds via DHCPv6 -> iPXE loads over IPv6 -> fetches HookOS kernel/initrd over IPv6 -> HookOS boots.
+
+## Phase 2 (follow-on)
+Workflow execution (tink-worker -> tink-server gRPC) runs over IPv6.
+
+---
+
+## Week 1: Infrastructure + CRD Foundation
+
+### Day 1-2: Lab Network Setup (DEN080)
+
+IMPORTANT: Before anything else, connect to lab VPN and verify firmware:
+- SSH to admin machine (10.80.18.102)
+- Pick a test server, access its iDRAC/BMC console
+- Run efibootmgr (or check BIOS boot menu) to confirm "UEFI PXEv6" boot entry exists
+- If PXEv6 is missing, check firmware update options before proceeding
+
+Network tasks:
+- [ ] Choose an unused VLAN ID (check https://quip-amazon.com/ArLuA3HDsLSK for inventory)
+- [ ] Assign a ULA IPv6 prefix: e.g. fd00:80:66::/64
+- [ ] Create VLAN on all switches via manage_vlans.sh on ns2.den080.eksalab.net
+- [ ] Configure SVI on distribution switch(es):
+      - Assign IPv6 address to SVI (e.g. fd00:80:66::1/64 as gateway)
+      - Suppress RAs: `ipv6 nd suppress-ra` (smee is authoritative, no SLAAC)
+      - OR send minimal RA with M-flag set (managed-config) if iPXE needs RA to bootstrap DHCPv6
+- [ ] Assign 4-5 server access ports to the new VLAN
+- [ ] Configure admin machine (10.80.18.102) with an IPv6 address on the new VLAN:
+      - If trunk port: add tagged VLAN interface (e.g. eth0.VLAN_ID with fd00:80:66::2/64)
+      - If access port: may need a second NIC or reconfigure
+- [ ] Verify IPv6 connectivity: ping6 between admin machine and switch SVI
+
+### Day 2-3: CRD Patch (Upstream PR #445)
+
+- [ ] Review upstream PR https://github.com/tinkerbell/tinkerbell/pull/445 diff
+- [ ] Cherry-pick or replicate the IPv6 CRD field additions locally:
+      - Expected: prefix_length field in interface.dhcp.ip (or new ipv6 block)
+      - Validate: do the new fields cover what DHCPv6 IA_NA needs? (address + prefix length minimum)
+- [ ] Apply patched CRD to local crd/bases/tinkerbell.org_hardware.yaml
+- [ ] Update Go types in api/v1alpha1 if needed to match CRD schema changes
+- [ ] Verify: `go build ./...` passes with the new fields
+
+---
+
+## Week 2: DHCPv6 Implementation in Smee
+
+### Day 4-6: DHCPv6 Handler
+
+Code location: smee/internal/dhcp/
+
+- [ ] Add DHCPv6 handler package (parallel to existing handler/reservation):
+      - New file(s): smee/internal/dhcp/handler/reservation6/ (or extend existing)
+      - Handle DHCPv6 message types: Solicit -> Advertise, Request -> Reply
+      - Construct IA_NA option with IPv6 address from Hardware CRD (read via ConvertByMac)
+      - Set DHCPv6 option 23 (DNS recursive name servers)
+      - Set DHCPv6 option 59 (Boot File URL): e.g. http://[fd00:80:66::2]:8080/ipxe/binary/ipxe.efi
+      - Generate server DUID (can be DUID-LLT based on smee's MAC, or hardcode for POC)
+      - Hardcode preferred/valid lifetimes for POC (e.g. 3600/7200)
+
+- [ ] Update conv.go toDHCPData() to populate prefix length from new CRD field
+- [ ] Add DHCPv6-specific fields to data.go DHCP struct (PrefixLength int, or separate struct)
+
+### Day 6-7: Wire DHCPv6 Listener into Smee
+
+Code location: smee/smee.go
+
+- [ ] In Config.Start(), add parallel DHCPv6 server goroutine:
+      - Use insomniacslk/dhcp/dhcpv6/server6 package
+      - Listen on the IPv6 VLAN interface (link-scoped or global address)
+      - Port: 547 (standard DHCPv6 server port)
+- [ ] Add config fields: DHCP.BindAddrV6, DHCP.EnabledV6
+- [ ] Ensure iPXE script URL generation handles IPv6 bracket notation:
+      - http://[fd00:80:66::2]:8080/ipxe/script/<mac>/auto.ipxe
+      - Check hook.go DownloadURL and TinkGRPCAuthority template vars
+
+### Day 7: Unit Tests
+
+- [ ] DHCPv6 handler unit test: send Solicit, validate Advertise response contents
+- [ ] Integration test: full Solicit -> Advertise -> Request -> Reply exchange against mock backend
+
+---
+
+## Week 3: Lab Testing + Debugging
+
+### Day 8-9: Deploy and First Boot Attempt
+
+- [ ] Build modified smee binary (or container image)
+- [ ] Deploy standalone tink stack to k3d on admin machine:
+      k3d cluster create --network host --no-lb --k3s-arg "--disable=traefik,servicelb,metrics-server,local-storage"
+      helm install tink-stack (with patched CRDs)
+- [ ] Create Hardware object for test server:
+      - MAC: (PXE NIC MAC on IPv6 VLAN)
+      - IP address: fd00:80:66::10 (or similar)
+      - prefix_length: 64
+      - gateway: fd00:80:66::1
+      - Netboot.AllowPXE: true
+- [ ] Set test server boot order to PXEv6 via iDRAC/IPMI:
+      ipmitool -H <bmc_ip> -U <user> -P <pass> -I lanplus chassis bootdev pxe options=efiboot
+      (may need to specifically select the PXEv6 boot entry via efibootmgr or BIOS)
+- [ ] Power on test server, watch console via iDRAC virtual console
+- [ ] Monitor smee logs for incoming DHCPv6 Solicit
+
+### Day 9-11: Debug Loop
+
+Expected issues to troubleshoot:
+- [ ] iPXE not sending DHCPv6 Solicit: may need minimal RA with M-flag
+      - Workaround: configure radvd on admin machine or switch SVI to send RA with managed-config flag
+- [ ] DHCPv6 option 59 (boot file URL) not being parsed by iPXE
+      - Check iPXE source/docs for expected option format
+      - May need to use option 60 (bootfile-param) additionally
+- [ ] iPXE chainload loop: ensure UserClass "Tinkerbell" detection works over DHCPv6
+      - DHCPv6 option 15 (User Class) vs DHCPv4 option 77
+- [ ] Kernel/initrd download fails: verify HTTP server on admin machine is listening on IPv6
+      - k3d with --network host should expose on all interfaces including IPv6
+- [ ] iPXE hangs at "Waiting for link-up": physical cabling / VLAN mismatch
+
+### Day 11-12: Validate End-to-End + Document
+
+- [ ] Confirm HookOS boots and shows login prompt on iDRAC console
+- [ ] Capture packet trace (tcpdump on admin machine) showing full DHCPv6 exchange
+- [ ] Document:
+      - What CRD fields were needed (feedback for upstream PR #445)
+      - Any iPXE quirks discovered (RA requirement, option format, etc.)
+      - Network topology that worked
+      - Firmware requirements / known-good server models
+
+---
+
+## Key Risks & Mitigations
+
+| Risk | Likelihood | Mitigation |
+|------|-----------|------------|
+| Server firmware lacks PXEv6 boot ROM | Low (Dell iDRAC usually has it) | Check on Day 1 before any other work |
+| iPXE needs RA before DHCPv6 | Medium | Run radvd with M-flag on admin machine |
+| iPXE DHCPv6 option 59 parsing bugs | Medium | Fall back to RA with TFTP boot file info |
+| Admin machine network access to IPv6 VLAN | Low | Verify trunk/tagged config early |
+| Upstream PR #445 fields insufficient | Low | Can extend locally; POC validates this |
+
+---
+
+## Architecture Diagram (simplified)
+
+```
+                   IPv4 BMC Network (existing)
+                   ┌──────────────────────────────┐
+                   │   iDRAC/IPMI (power control)  │
+                   └──────────┬───────────────────┘
+                              │ IPMI over IPv4
+                              │
+┌─────────────────────────────┼────────────────────────────────┐
+│  DEN080 Lab - New IPv6 VLAN │(fd00:80:66::/64)               │
+│                              │                                │
+│  ┌───────────────┐    DHCPv6│Solicit     ┌────────────────┐  │
+│  │ Admin Machine │◄──────────┼───────────│  Test Server   │  │
+│  │ fd00:80:66::2 │           │           │  PXEv6 NIC     │  │
+│  │               │───────────┼──────────►│  fd00:80:66::10│  │
+│  │  k3d cluster  │  DHCPv6 Reply +       └────────────────┘  │
+│  │  ├─ smee      │  Boot File URL                            │
+│  │  ├─ tink-svr  │  + kernel/initrd                          │
+│  │  └─ hook imgs │  via HTTP over IPv6                       │
+│  └───────────────┘                                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## References
+- Upstream IPv6 CRD PR: https://github.com/tinkerbell/tinkerbell/pull/445
+- DEN080 VLAN inventory: https://quip-amazon.com/ArLuA3HDsLSK
+- DEN080 network/firewall: https://quip-amazon.com/ixuYAIpBAuFs/DENSEA43-FortiGate-Firewalls-Network-and-Policies
+- Standalone tink stack guide: https://quip-amazon.com/Hr54Akn0bZIj/From-zero-to-running-clean-up-workflows
+- DEN080 adding VLANs: https://quip-amazon.com/DZ4bAwF53aPK/Adding-VLANs-in-EKS-A-DEN080-Lab
+- insomniacslk/dhcp library: github.com/insomniacslk/dhcp (dhcpv6 + server6 packages)
+- iPXE IPv6 support: enabled via NET_PROTO_IPV6 in common.h (already compiled in)
