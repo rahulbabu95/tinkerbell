@@ -42,14 +42,25 @@ func (s *DHCPv6Server) Serve(ctx context.Context) error {
 			return err
 		}
 
+		s.Logger.Info("received DHCPv6 packet", "bytes", n, "peer", peer.String())
+
 		msg, err := dhcpv6.FromBytes(buf[:n])
 		if err != nil {
-			s.Logger.V(1).Info("error parsing DHCPv6 message", "error", err)
+			s.Logger.Info("error parsing DHCPv6 message", "error", err)
 			continue
 		}
 
+		s.Logger.Info("parsed DHCPv6 message", "type", msg.Type().String(), "peer", peer.String())
+
 		for _, handler := range s.Handlers {
-			go handler.Handle6(s.Conn, peer, msg)
+			go func(h Handler6) {
+				defer func() {
+					if r := recover(); r != nil {
+						s.Logger.Error(nil, "panic in DHCPv6 handler", "recover", r)
+					}
+				}()
+				h.Handle6(s.Conn, peer, msg)
+			}(handler)
 		}
 	}
 }
