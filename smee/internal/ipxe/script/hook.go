@@ -4,7 +4,11 @@ package script
 var HookScript = `#!ipxe
 
 {{- if .SyslogHost }}
+{{- if contains ":" .SyslogHost }}
+set syslog6 {{ .SyslogHost }}
+{{- else }}
 set syslog {{ .SyslogHost }}
+{{- end }}
 {{- end}}
 
 echo Loading the Tinkerbell Hook iPXE script...
