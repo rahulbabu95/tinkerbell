@@ -449,7 +449,9 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		})
 
 		// Start a second TFTP listener on IPv6 when DHCPv6 is enabled.
-		if c.DHCPv6.Enabled && c.DHCPv6.ServerAddr.IsValid() && c.DHCPv6.ServerAddr.Is6() {
+		// Skip if primary TFTP is already bound to a wildcard address that covers IPv6.
+		if c.DHCPv6.Enabled && c.DHCPv6.ServerAddr.IsValid() && c.DHCPv6.ServerAddr.Is6() &&
+			!c.TFTP.BindAddr.IsUnspecified() {
 			addrPortV6 := netip.AddrPortFrom(c.DHCPv6.ServerAddr, c.TFTP.BindPort)
 			tftpHandlerV6 := binary.TFTP{
 				Log:                  log,
