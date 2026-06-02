@@ -4,7 +4,7 @@ package script
 var HookScript = `#!ipxe
 
 {{- if .SyslogHost }}
-{{- if contains ":" .SyslogHost }}
+{{- if contains .SyslogHost ":" }}
 set syslog6 {{ .SyslogHost }}
 {{- else }}
 set syslog {{ .SyslogHost }}
